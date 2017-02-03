@@ -91,7 +91,7 @@ private:
         const geometry_msgs::PoseStamped::ConstPtr& msg)
     {	
         m_goal = *msg;
-	last_marker = ros::Time::now();
+	m_last_marker = ros::Time::now();
 	
     }
 
@@ -195,7 +195,7 @@ private:
 		
 		// Safety Landing if sight of marker is lost longer than 1 sec
 		ros::Duration timeout(1.0);
-		if (ros::Time::now() - last_marker > timeout) {
+		if (ros::Time::now() - m_last_marker > timeout) {
 			m_state = SafetyLanding;
 			m_safety_start_time = ros::Time::now();
 			ROS_WARN("Safety Landing initialized");
@@ -289,7 +289,7 @@ private:
     float m_thrust;
     float m_startZ;
     float m_last_thrust;
-    ros::Time last_marker;	
+    ros::Time m_last_marker;	
     float m_target_height;
     ros::Time m_safety_start_time;
 };

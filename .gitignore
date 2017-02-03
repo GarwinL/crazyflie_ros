@@ -1,0 +1,19 @@
+# Ignore debug stuff
+*.bag
+
+# Ignore generated docs
+*.dox
+*.wikidoc
+
+# qcreator stuff
+CMakeLists.txt.user
+qtcreator-*
+*.user
+
+# python
+*.pcd
+*.pyc
+
+*~
+*autosave
+.dropbox*
