@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <launch>
-  <arg name="uri" default="radio://0/90/2M" />
+  <arg name="uri" default="radio://0/120/2M/E7E7E7E701" />
   <arg name="frame" default="/vicon/crazyflie/crazyflie" />
   <arg name="joy_dev" default="/dev/input/js0" />
   <arg name="x" default="0" />

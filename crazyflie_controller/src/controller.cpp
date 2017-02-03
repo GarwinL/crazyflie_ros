@@ -69,6 +69,7 @@ public:
         , m_serviceLand()
         , m_thrust(0)
         , m_startZ(0)
+	, m_last_thrust(0)
     {
         ros::NodeHandle nh;
         m_listener.waitForTransform(m_worldFrame, m_frame, ros::Time(0), ros::Duration(10.0)); 
@@ -88,17 +89,20 @@ public:
 private:
     void goalChanged(
         const geometry_msgs::PoseStamped::ConstPtr& msg)
-    {
+    {	
         m_goal = *msg;
+	last_marker = ros::Time::now();
+	
     }
 
     bool takeoff(
         std_srvs::Empty::Request& req,
         std_srvs::Empty::Response& res)
     {
+	pidReset();
+	m_thrust = 25000;
         ROS_INFO("Takeoff requested!");
         m_state = TakingOff;
-
         tf::StampedTransform transform;
         m_listener.lookupTransform(m_worldFrame, m_frame, ros::Time(0), transform);
         m_startZ = transform.getOrigin().z();
@@ -110,7 +114,7 @@ private:
         std_srvs::Empty::Request& req,
         std_srvs::Empty::Response& res)
     {
-        ROS_INFO("Landing requested!");
+        ROS_WARN("Landing requested!");
         m_state = Landing;
 
         return true;
@@ -127,7 +131,7 @@ private:
     void pidReset()
     {
         m_pidX.reset();
-        m_pidZ.reset();
+        m_pidY.reset();
         m_pidZ.reset();
         m_pidYaw.reset();
     }
@@ -139,14 +143,16 @@ private:
         switch(m_state)
         {
         case TakingOff:
-            {
+            {	
                 tf::StampedTransform transform;
                 m_listener.lookupTransform(m_worldFrame, m_frame, ros::Time(0), transform);
-                if (transform.getOrigin().z() > m_startZ + 0.05 || m_thrust > 50000)
+		
+                if (transform.getOrigin().z() > m_startZ + 0.05 /*|| m_thrust > 50000*/)
                 {
                     pidReset();
-                    m_pidZ.setIntegral(m_thrust / m_pidZ.ki());
+                    //m_pidZ.setIntegral(m_thrust / m_pidZ.ki());
                     m_state = Automatic;
+		    ROS_WARN("Entering Automatic Mode");
                     m_thrust = 0;
                 }
                 else
@@ -161,18 +167,41 @@ private:
             break;
         case Landing:
             {
-                m_goal.pose.position.z = m_startZ + 0.05;
-                tf::StampedTransform transform;
+		m_target_height = 0.05;
+		tf::StampedTransform transform;
                 m_listener.lookupTransform(m_worldFrame, m_frame, ros::Time(0), transform);
-                if (transform.getOrigin().z() <= m_startZ + 0.05) {
-                    m_state = Idle;
-                    geometry_msgs::Twist msg;
-                    m_pubNav.publish(msg);
-                }
+		
+		if(transform.getOrigin().z() <= 0.35) {
+		     ros::Time m_start_time = ros::Time::now();
+		     ros::Duration timeout(3.0);
+		     while(ros::Time::now() - m_start_time < timeout) {
+			geometry_msgs::Twist msg;
+			msg.linear.x = 0;
+			msg.linear.y = 0;
+			msg.linear.z = m_last_thrust - 2000;
+			m_pubNav.publish(msg);
+			m_last_thrust = msg.linear.z;
+			ros::Duration(0.1).sleep();
+		     }
+			m_state = Idle;
+		        geometry_msgs::Twist msg;
+                        m_pubNav.publish(msg); 
+		}
+				
             }
             // intentional fall-thru
         case Automatic:
-            {
+            {	
+		
+		// Safety Landing if sight of marker is lost longer than 1 sec
+		ros::Duration timeout(1.0);
+		if (ros::Time::now() - last_marker > timeout) {
+			m_state = SafetyLanding;
+			m_safety_start_time = ros::Time::now();
+			ROS_WARN("Safety Landing initialized");
+			break;
+		}
+
                 tf::StampedTransform transform;
                 m_listener.lookupTransform(m_worldFrame, m_frame, ros::Time(0), transform);
 
@@ -180,35 +209,55 @@ private:
                 targetWorld.header.stamp = transform.stamp_;
                 targetWorld.header.frame_id = m_worldFrame;
                 targetWorld.pose = m_goal.pose;
-
-                geometry_msgs::PoseStamped targetDrone;
-                m_listener.transformPose(m_frame, targetWorld, targetDrone);
+		
+		if(m_state != Landing) m_target_height = 0.7;
 
                 tfScalar roll, pitch, yaw;
                 tf::Matrix3x3(
                     tf::Quaternion(
-                        targetDrone.pose.orientation.x,
-                        targetDrone.pose.orientation.y,
-                        targetDrone.pose.orientation.z,
-                        targetDrone.pose.orientation.w
+                        targetWorld.pose.orientation.x,
+                        targetWorld.pose.orientation.y,
+                        targetWorld.pose.orientation.z,
+                        targetWorld.pose.orientation.w
                     )).getRPY(roll, pitch, yaw);
 
                 geometry_msgs::Twist msg;
-                msg.linear.x = m_pidX.update(0, targetDrone.pose.position.x);
-                msg.linear.y = m_pidY.update(0.0, targetDrone.pose.position.y);
-                msg.linear.z = m_pidZ.update(0.0, targetDrone.pose.position.z);
-                msg.angular.z = m_pidYaw.update(0.0, yaw);
+		if (targetWorld.pose.position.x > 0.2 && targetWorld.pose.position.x < -0.2)
+			msg.linear.x = m_pidX.updateWithoutI(0.0, targetWorld.pose.position.x);
+		else
+			msg.linear.x = m_pidX.update(0.0, targetWorld.pose.position.x);
+
+		if (targetWorld.pose.position.y > 0.2 && targetWorld.pose.position.y < -0.2)
+			msg.linear.y = m_pidY.updateWithoutI(0.0, targetWorld.pose.position.y);
+		else
+			msg.linear.y = m_pidY.update(0.0, targetWorld.pose.position.y);			
+			
+                msg.linear.z = 39000 + m_pidZ.update(m_target_height, targetWorld.pose.position.z);
+                msg.angular.z = m_pidYaw.update(0, yaw);
                 m_pubNav.publish(msg);
-
-
+		m_last_thrust = msg.linear.z;
             }
             break;
         case Idle:
-            {
+            {	
                 geometry_msgs::Twist msg;
                 m_pubNav.publish(msg);
             }
             break;
+	case SafetyLanding:
+	    {
+		ros::Duration timeout(3.0);
+		if (ros::Time::now() - m_safety_start_time < timeout && m_last_thrust > 0.0) {
+			geometry_msgs::Twist msg;
+			msg.linear.x = 0;
+			msg.linear.y = 0;
+			msg.linear.z = m_last_thrust - 10000*dt;
+			m_pubNav.publish(msg);
+			m_last_thrust = msg.linear.z;
+		}
+		else m_state = Idle;	
+	    }
+	    break;
         }
     }
 
@@ -220,6 +269,7 @@ private:
         Automatic = 1,
         TakingOff = 2,
         Landing = 3,
+	SafetyLanding = 4,
     };
 
 private:
@@ -238,6 +288,10 @@ private:
     ros::ServiceServer m_serviceLand;
     float m_thrust;
     float m_startZ;
+    float m_last_thrust;
+    ros::Time last_marker;	
+    float m_target_height;
+    ros::Time m_safety_start_time;
 };
 
 int main(int argc, char **argv)

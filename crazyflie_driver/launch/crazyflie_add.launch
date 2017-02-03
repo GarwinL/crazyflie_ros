@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 
 <launch>
-  <arg name="uri" default="radio://0/80/2M" />
+  <arg name="uri" default="radio://0/120/2M/E7E7E7E701" />
   <arg name="tf_prefix" default="" />
   <arg name="roll_trim" default="0" />
   <arg name="pitch_trim" default="0" />
